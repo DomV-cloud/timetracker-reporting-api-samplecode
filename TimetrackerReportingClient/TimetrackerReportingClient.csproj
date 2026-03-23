@@ -108,6 +108,9 @@
     <Compile Include="Api\Models\WorkLog.cs" />
     <Compile Include="Api\TimePaceApiClient.cs" />
     <Compile Include="AppSettings.cs" />
+    <Compile Include="Fakturoid\Models\InvoiceRequest.cs" />
+    <Compile Include="Fakturoid\Models\TokenResponse.cs" />
+    <Compile Include="Fakturoid\FakturoidClient.cs" />
     <Compile Include="CommandLine.cs" />
     <Compile Include="Connected Services\TimetrackerProxy\TimetrackerProxy.cs" />
     <Compile Include="Program.cs" />

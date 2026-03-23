@@ -6,6 +6,8 @@ using CommandLine;
 using Newtonsoft.Json;
 using TimetrackerReportingClient.Api;
 using TimetrackerReportingClient.Api.Models;
+using TimetrackerReportingClient.Fakturoid;
+using TimetrackerReportingClient.Fakturoid.Models;
 
 namespace TimetrackerReportingClient
 {
@@ -71,6 +73,11 @@ namespace TimetrackerReportingClient
             if (!string.IsNullOrEmpty(cmd.Format))
                 Export(cmd.Format, logs, year, month);
 
+            Console.WriteLine();
+            Console.Write("Create invoice in Fakturoid? (y/n): ");
+            if (Console.ReadLine()?.Trim().ToLower() == "y")
+                CreateFakturoidInvoice(logs, year, month, settings);
+
             Console.ReadLine();
         }
 
@@ -130,6 +137,70 @@ namespace TimetrackerReportingClient
             else
             {
                 Console.WriteLine($"Unknown export format '{format}'. Use 'json' or 'csv'.");
+            }
+        }
+
+        private static void CreateFakturoidInvoice(List<WorkLog> logs, int year, int month, AppSettings settings)
+        {
+            if (string.IsNullOrEmpty(settings.FakturoidSlug) ||
+                string.IsNullOrEmpty(settings.FakturoidClientId) ||
+                string.IsNullOrEmpty(settings.FakturoidClientSecret))
+            {
+                Console.WriteLine("Error: Fakturoid credentials missing in appsettings.json.");
+                return;
+            }
+            if (settings.FakturoidSubjectId == 0)
+            {
+                Console.WriteLine("Error: fakturoidSubjectId is not set in appsettings.json.");
+                return;
+            }
+
+            // Issue date = last day of the reported month
+            var issuedOn = new DateTime(year, month, DateTime.DaysInMonth(year, month));
+            var dueOn    = issuedOn.AddDays(settings.DueDays);
+
+            // Group work logs by work item, sum hours per item
+            var lines = logs
+                .GroupBy(l => l.WorkItemId)
+                .Select(g => new InvoiceLine
+                {
+                    Name      = $"#{g.Key}",
+                    Quantity  = Math.Round(g.Sum(l => l.Hours), 2).ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                    Unit      = "hod",
+                    UnitPrice = settings.HourlyRate.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                    VatRate   = 0
+                })
+                .OrderByDescending(l => double.Parse(l.Quantity, System.Globalization.CultureInfo.InvariantCulture))
+                .ToList();
+
+            var invoice = new InvoiceRequest
+            {
+                SubjectId     = settings.FakturoidSubjectId,
+                IssuedOn      = issuedOn.ToString("yyyy-MM-dd"),
+                DueOn         = dueOn.ToString("yyyy-MM-dd"),
+                PaymentMethod = "bank",
+                Lines         = lines
+            };
+
+            Console.WriteLine($"\nCreating invoice in Fakturoid...");
+            Console.WriteLine($"  Issue date : {issuedOn:dd.MM.yyyy}");
+            Console.WriteLine($"  Due date   : {dueOn:dd.MM.yyyy}");
+            Console.WriteLine($"  Lines      : {lines.Count}");
+            Console.WriteLine($"  Total      : {lines.Sum(l => double.Parse(l.Quantity, System.Globalization.CultureInfo.InvariantCulture) * (double)settings.HourlyRate):N2} Kč");
+
+            try
+            {
+                var client = new FakturoidClient(
+                    settings.FakturoidSlug,
+                    settings.FakturoidClientId,
+                    settings.FakturoidClientSecret);
+
+                var location = client.CreateInvoice(invoice);
+                Console.WriteLine($"  Invoice created: {location}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Error: {ex.Message}");
             }
         }
 

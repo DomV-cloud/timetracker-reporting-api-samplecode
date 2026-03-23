@@ -3,7 +3,10 @@
     "allow": [
       "WebFetch(domain:appfire.atlassian.net)",
       "WebFetch(domain:timehub.7pace.com)",
-      "WebFetch(domain:dev.azure.com)"
+      "WebFetch(domain:dev.azure.com)",
+      "WebFetch(domain:www.fakturoid.cz)",
+      "WebFetch(domain:app.fakturoid.cz)",
+      "WebFetch(domain:fakturoid.docs.apiary.io)"
     ]
   }
 }

@@ -1,29 +1,28 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Dynamic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using CommandLine;
-using CommandLine.Text;
+﻿using CommandLine;
 
 namespace TimetrackerReportingClient
 {
     public class CommandLineOptions
     {
-        [Value( 0, Required = true, HelpText = "Service URL for Timetracker OData endpoint (without ?api-version)" )]
-        public Uri ServiceUri { get; set; }
+        [Value(0, Required = false, HelpText = "Base URL for the 7pace Timetracker API. Overrides appsettings.json.\n" +
+            "Azure DevOps Services: https://{your-org}.timehub.7pace.com/\n" +
+            "Azure DevOps Server:   https://{server}/tfs/{collection}/{project}/_apis/timetracker/")]
+        public string BaseUrl { get; set; }
 
-        [Option( 'x', HelpText = "Export format (if required). Possible values: xml, json. Provide empty string if no export required" )]
-        public string Format { get; set; }
-
-        [Option( 'w', Default = false, HelpText = "On-premise usage (NTLM auth)" )]
-        public bool IsWindowsAuth { get; set; }
-
-        [Option( 't', HelpText = "Token for Timetracker API (VSTS usage)" )]
+        [Option('t', "token", Required = false, HelpText = "Bearer token for 7pace API authentication. Overrides appsettings.json.")]
         public string Token { get; set; }
 
-        [Option( 'c', Default = null, HelpText = "Comma separated list of work item's custom fields, e.g. System.RemoteLinkCount,System.CommentCount,System.IterationLevel1 ")]
-        public IEnumerable<string> CustomFields { get; set; }
+        [Option('m', "month", Default = 0, HelpText = "Month to report on (1-12). Defaults to previous month.")]
+        public int Month { get; set; }
+
+        [Option('y', "year", Default = 0, HelpText = "Year to report on. Defaults to current year (or previous year if month is December).")]
+        public int Year { get; set; }
+
+        [Option('a', "all-users", Default = false, HelpText = "Fetch work logs for all users (requires Product/Budget/Administrator role).")]
+        public bool AllUsers { get; set; }
+
+        [Option('x', "export", Default = null, HelpText = "Export format: json or csv. Omit to skip export.")]
+        public string Format { get; set; }
+
     }
 }

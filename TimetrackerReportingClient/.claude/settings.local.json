@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:appfire.atlassian.net)",
+      "WebFetch(domain:timehub.7pace.com)",
+      "WebFetch(domain:dev.azure.com)"
+    ]
+  }
+}

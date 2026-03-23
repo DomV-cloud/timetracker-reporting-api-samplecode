@@ -1,16 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Xml;
 using CommandLine;
-using ExtendedXmlSerializer.Configuration;
 using Newtonsoft.Json;
-using RestSharp.Serializers;
-using TimetrackerOnline.Reporting.Models;
-using Formatting = Newtonsoft.Json.Formatting;
-using XmlSerializer = System.Xml.Serialization.XmlSerializer;
+using TimetrackerReportingClient.Api;
+using TimetrackerReportingClient.Api.Models;
 
 namespace TimetrackerReportingClient
 {
@@ -18,111 +13,168 @@ namespace TimetrackerReportingClient
     {
         private static void Main(string[] args)
         {
-            bool parsed = false;
             CommandLineOptions cmd = null;
-            // Get parameters
-            CommandLine.Parser.Default.ParseArguments<CommandLineOptions>(args).WithParsed(x =>
-            {
-                parsed = true;
-                cmd = x;
-            })
-                       .WithNotParsed(x => { Console.WriteLine("Check https://github.com/7pace/timetracker-reporting-api-samplecode to get samples of usage"); });
+            Parser.Default.ParseArguments<CommandLineOptions>(args)
+                .WithParsed(x => cmd = x)
+                .WithNotParsed(_ =>
+                {
+                    Console.WriteLine("See --help for usage.");
+                    Environment.Exit(1);
+                });
 
-            if (!parsed)
+            // Load appsettings.json; CLI args override if provided
+            var settings = AppSettings.Load();
+            var baseUrl = !string.IsNullOrEmpty(cmd.BaseUrl) ? cmd.BaseUrl : settings.BaseUrl;
+            var token   = !string.IsNullOrEmpty(cmd.Token)   ? cmd.Token   : settings.Token;
+
+            if (string.IsNullOrEmpty(baseUrl))
             {
-                Console.ReadLine();
+                Console.WriteLine("Error: Base URL is required. Set it in appsettings.json or pass it as the first argument.");
+                Environment.Exit(1);
+            }
+            if (string.IsNullOrEmpty(token))
+            {
+                Console.WriteLine("Error: Token is required. Set it in appsettings.json or pass it with -t.");
+                Environment.Exit(1);
+            }
+
+            var (year, month) = cmd.Month > 0 && cmd.Year > 0
+                ? (cmd.Year, cmd.Month)
+                : AskForMonth();
+
+            var firstDay = new DateTime(year, month, 1);
+            var lastDay  = new DateTime(year, month, DateTime.DaysInMonth(year, month));
+            Console.WriteLine($"Reporting period: {firstDay:dd.MM.yyyy} – {lastDay:dd.MM.yyyy}");
+
+            var client = new TimePaceApiClient(baseUrl, token);
+
+            List<WorkLog> logs;
+            try
+            {
+                logs = client.GetWorkLogsForMonth(year, month, cmd.AllUsers);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error fetching work logs: {ex.Message}");
+                Environment.Exit(1);
                 return;
             }
 
-            // Create OData service context
-            var context = cmd.IsWindowsAuth
-                ? new TimetrackerOdataContext(cmd.ServiceUri)
-                : new TimetrackerOdataContext(cmd.ServiceUri, cmd.Token);
-
-            Console.WriteLine("Calling worklogs endpoint...");
-            // request for work items with worklogs
-            var workLogsWorkItemsExport = context.Container.workLogsWorkItems;
-            //fills custom fields values if provided. Check https://support.7pace.com/hc/en-us/articles/360035502332-Reporting-API-Overview#user-content-customfields to get more information
-            if (cmd.CustomFields != null && cmd.CustomFields.Any())
+            if (logs.Count == 0)
             {
-                workLogsWorkItemsExport = workLogsWorkItemsExport.AddQueryOption("customFields", string.Join(",", cmd.CustomFields));
+                Console.WriteLine("No work logs found for the selected period.");
+                return;
             }
-            var workLogsWorkItemsExportResult = workLogsWorkItemsExport
-                // Perform query for 3 last months
-                .Where(s => s.Timestamp > DateTime.Today.AddMonths(-3) && s.Timestamp < DateTime.Today)
-                // orfer items by worklog date
-                .OrderByDescending(g => g.WorklogDate.ShortDate).ToArray();
 
-            // Print out the result
-            foreach (var row in workLogsWorkItemsExportResult)
-            {
-                Console.WriteLine("{0:g} {1} {2}", row.WorklogDate.ShortDate, row.User.Name, row.PeriodLength);
-            }
-            Export(cmd.Format, workLogsWorkItemsExportResult, "workLogsWorkItemsExport");
+            PrintSummary(logs, year, month);
 
-            Console.WriteLine("\r\nCall to worklogs done, click enter to call workItemsHierarchy endpoint");
+            if (!string.IsNullOrEmpty(cmd.Format))
+                Export(cmd.Format, logs, year, month);
 
-            Console.ReadLine();
-            // request for work items with its hierarchy
-            var workItemsHierarchyExport = context.Container.workItemsHierarchy;
-            // fills rollup field with the sum of specified numeric field of work item and its children. Check https://support.7pace.com/hc/en-us/articles/360035502332-Reporting-API-Overview#rollupFields to get more information
-            workItemsHierarchyExport = workItemsHierarchyExport.AddQueryOption("rollupFields", "Microsoft.VSTS.Scheduling.CompletedWork");
-            var workItemsHierarchyExportResult = workItemsHierarchyExport
-                // Perform query for 3 last months
-                .Where(s => s.System_CreatedDate > DateTime.Today.AddDays(-10) && s.System_CreatedDate < DateTime.Today).ToArray();
-            Console.WriteLine("Call to workItemsHierarchy done");
-            Export(cmd.Format, workItemsHierarchyExportResult, "workItemsHierarchyExport");
             Console.ReadLine();
         }
 
-        public static void Export(string format, object extendedData, string fileName)
+        private static void PrintSummary(List<WorkLog> logs, int year, int month)
         {
-            if (string.IsNullOrEmpty(format))
+            Console.WriteLine();
+            Console.WriteLine($"=== Work Log Summary — {new DateTime(year, month, 1):MMMM yyyy} ===");
+            Console.WriteLine();
+
+            // Group by date, sum hours per day
+            var byDay = logs
+                .GroupBy(l => l.Timestamp.Date)
+                .OrderBy(g => g.Key)
+                .Select(g => new
+                {
+                    Date = g.Key,
+                    TotalHours = g.Sum(l => l.Hours),
+                    Entries = g.Count()
+                })
+                .ToList();
+
+            Console.WriteLine($"{"Date",-14} {"Entries",8} {"Hours",10}");
+            Console.WriteLine(new string('-', 36));
+
+            foreach (var day in byDay)
             {
-                return;
+                Console.WriteLine($"{day.Date:yyyy-MM-dd,-14} {day.Entries,8} {day.TotalHours,10:F2}");
             }
 
-            //save here
-            string location = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            Console.WriteLine(new string('-', 36));
 
-            //once you have the path you get the directory with:
-            var directory = System.IO.Path.GetDirectoryName(location);
+            double totalHours = logs.Sum(l => l.Hours);
+            Console.WriteLine($"{"TOTAL",-14} {logs.Count,8} {totalHours,10:F2}");
+            Console.WriteLine();
+        }
 
-            if (format == "xml")
+        private static void Export(string format, List<WorkLog> logs, int year, int month)
+        {
+            var dir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            var fileName = $"worklogs_{year}_{month:D2}";
+
+            if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
             {
-                var serializer = new ConfigurationContainer()
-
-                    // Configure...
-                    .Create();
-
-                var exportPath = directory + $"/{fileName}.xml";
-
-                var file = File.OpenWrite(exportPath);
-                var settings = new XmlWriterSettings { Indent = true };
-
-                var xmlTextWriter = new XmlTextWriter(file, Encoding.UTF8);
-                xmlTextWriter.Formatting = System.Xml.Formatting.Indented;
-
-                xmlTextWriter.Indentation = 4;
-
-                serializer.Serialize(xmlTextWriter, extendedData);
-                xmlTextWriter.Close();
-                xmlTextWriter.Dispose();
-                file.Close();
-                file.Dispose();
+                var path = Path.Combine(dir, fileName + ".json");
+                File.WriteAllText(path, JsonConvert.SerializeObject(logs, Formatting.Indented));
+                Console.WriteLine($"Exported to {path}");
             }
-            else if (format == "json")
+            else if (format.Equals("csv", StringComparison.OrdinalIgnoreCase))
             {
-                var json = JsonConvert.SerializeObject(extendedData, Formatting.Indented);
-                var exportPath = directory + $"/{fileName}.json";
-                File.WriteAllText(exportPath, json);
+                var path = Path.Combine(dir, fileName + ".csv");
+                var lines = new List<string> { "Date,WorkItemId,Hours,Comment,Billable" };
+                lines.AddRange(logs.Select(l =>
+                    $"{l.Timestamp:yyyy-MM-dd},{l.WorkItemId},{l.Hours:F4},{EscapeCsv(l.Comment)},{l.Billable}"));
+                File.WriteAllLines(path, lines);
+                Console.WriteLine($"Exported to {path}");
             }
             else
             {
-                throw new NotSupportedException("Provided format is not supported: " + format);
+                Console.WriteLine($"Unknown export format '{format}'. Use 'json' or 'csv'.");
             }
+        }
 
-            Console.WriteLine($"\r\nExport to file {fileName}.{format} completed");
+        private static (int Year, int Month) AskForMonth()
+        {
+            while (true)
+            {
+                Console.Write("Which month do you need? (e.g. April): ");
+                var input = Console.ReadLine()?.Trim();
+
+                if (string.IsNullOrEmpty(input))
+                    continue;
+
+                // Try parsing as a month name (English)
+                if (DateTime.TryParseExact(input, "MMMM",
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None,
+                        out var parsed))
+                {
+                    return (DateTime.Today.Year, parsed.Month);
+                }
+
+                // Also accept short names: Jan, Feb, Mar...
+                if (DateTime.TryParseExact(input, "MMM",
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None,
+                        out parsed))
+                {
+                    return (DateTime.Today.Year, parsed.Month);
+                }
+
+                // Also accept a number: 4 or 04
+                if (int.TryParse(input, out int monthNumber) && monthNumber >= 1 && monthNumber <= 12)
+                    return (DateTime.Today.Year, monthNumber);
+
+                Console.WriteLine($"  Could not parse '{input}' as a month. Try: April, Apr, or 4.");
+            }
+        }
+
+        private static string EscapeCsv(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+            if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
+                return $"\"{value.Replace("\"", "\"\"")}\"";
+            return value;
         }
     }
 }

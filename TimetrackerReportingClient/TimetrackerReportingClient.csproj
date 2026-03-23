@@ -104,6 +104,10 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Api\Models\ApiResponse.cs" />
+    <Compile Include="Api\Models\WorkLog.cs" />
+    <Compile Include="Api\TimePaceApiClient.cs" />
+    <Compile Include="AppSettings.cs" />
     <Compile Include="CommandLine.cs" />
     <Compile Include="Connected Services\TimetrackerProxy\TimetrackerProxy.cs" />
     <Compile Include="Program.cs" />
@@ -114,6 +118,9 @@
     <None Include="App.config" />
     <None Include="Connected Services\TimetrackerProxy\ConnectedService.json" />
     <None Include="packages.config" />
+    <Content Include="appsettings.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <WCFMetadata Include="Connected Services\" />
